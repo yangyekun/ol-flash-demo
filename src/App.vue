@@ -1,6 +1,6 @@
 <template>
   <div class="map-container" id="wMap"></div>
-  <span class="curZoom" style="position: absolute; bottom: 20px; left: 180px;">{{currentZoom}}</span>
+  <span class="curZoom" style="position: absolute; bottom: 8px; left: 140px;">地图层级: {{currentZoom}}</span>
 </template>
 
 <script setup>
@@ -87,12 +87,12 @@ const initMap = () => {
       })
     );
   });
-  // 监听
+  // 监听鼠标滚轮
   mapView.on("change:resolution", e => {
     currentZoom.value = mapView.getZoom().toFixed(1);
   })
 
-  // 点击事件，cleTm防止多次执行相同操作
+  // 地图点击事件，cleTm防止多次执行相同操作
   let cleTm;
   map.on("singleclick", e => {
     // 当前点击的经纬度
@@ -106,11 +106,11 @@ const initMap = () => {
       if (cleTm) {
         clearTimeout(cleTm)
       }
-      // 200ms后把isClick重新改为false，不然点第二个点会无反应，被上面return掉(103行)
+      // 200ms后把isClick重新改为false，不然点第二个点会无反应，被上面return掉
       cleTm = setTimeout(() => {
         isClick.value = false;
       }, 200);
-      // 获取当前点击的feature
+      // 获取当前点击的feature，以便进行后续操作
       console.log(feature);
     },{ hitTolerance: 20 });
   })
@@ -128,7 +128,7 @@ const initMap = () => {
     }
   })
   // 绘制闪烁点图层，r1 r2内圈外圈，style对应内圈外圈的样式，
-  // 最中间圆点保持不动，让r1和r2想歪扩散
+  // 最中间圆点保持不动，让r1和r2向外扩散
   let rainFeature = [];
   let rains = [{lgtd: 117.946241, lttd: 32.458797},{lgtd: 118.499925, lttd: 32.395283}]
   let rainStyle = new Style({
@@ -199,7 +199,7 @@ const initMap = () => {
   })
   map.addLayer(rainLayer);
 
-  // 让点闪烁起来，上一步仅绘制了图层，并不会闪
+  // 让点闪烁起来，上一步仅绘制了图层，也就是第一个画面，还并不会闪
   rainLayer.on("postrender", evt => {
     if (r1 >= 5.5) {
       r1 = 4
@@ -242,6 +242,7 @@ const initMap = () => {
     })
     r1+=0.01;
     r2+=0.01;
+    // 调用layer的changed方法，让他不断绘制下一个画面，即形成闪烁
     rainLayer.changed();
   })
 
@@ -329,7 +330,7 @@ const initMap = () => {
         if (curLineWidth.toFixed(0) == "3") {
           flag = -1;
         }
-        // 调用layer的changed方法，进行刷新
+        // 调用layer的changed方法，进行绘制
         iconLayer.changed();
       })
     }
