@@ -1,4 +1,13 @@
 <template>
+  <div class="toggle">
+    <span>显示控制: </span>
+    <input type="radio" name="showType" id="none" :value="0" v-model="shtp">
+    <label for="none">无</label>
+    <input type="radio" name="showType" id="showDzx" :value="1" v-model="shtp">
+    <label for="showDzx">等值线</label>
+    <input type="radio" name="showType" id="showDzm" :value="2" v-model="shtp">
+    <label for="showDzm">等值面</label>
+  </div>
   <div class="map-container" id="wMap"></div>
   <span class="curZoom" style="position: absolute; bottom: 8px; left: 140px;">地图层级: {{currentZoom}}</span>
 </template>
@@ -10,22 +19,24 @@ import { Tile as TileLayer, Vector as VectorLayer} from "ol/layer";
 import { Vector as VectorSource} from "ol/source";
 import {ScaleLine} from 'ol/control';
 import Feature from 'ol/Feature';
-import { Point } from 'ol/geom';
+import { Point, LineString, Polygon } from 'ol/geom';
 import { getVectorContext } from "ol/render";
-import {Fill, Style, Stroke, Circle} from 'ol/style';
+import {Fill, Style, Stroke, Circle, Text} from 'ol/style';
 import "ol/ol.css";
 import EsriJSON from 'ol/format/EsriJSON';
 import WMTS, {optionsFromCapabilities} from 'ol/source/WMTS';
 import WMTSCapabilities from 'ol/format/WMTSCapabilities';
 
-const huaiNanUrl = 'http://60.174.203.118:6080/arcgis/rest/services/bengbufenzhongxin/%E6%B7%AE%E5%8D%97%E5%B8%82/MapServer/WMTS/1.0.0/WMTSCapabilities.xml';
-const chuZhouUrl = 'http://60.174.203.118:6080/arcgis/rest/services/ChuZhou/ChuZhouFZXDT/MapServer/WMTS/1.0.0/WMTSCapabilities.xml';
+const anhuiUrl = 'http://60.174.203.118:6080/arcgis/rest/services/AnHuiShuiXinXi/AnHuiShuiXinXi_SXDT/MapServer/WMTS/1.0.0/WMTSCapabilities.xml';
 
 let map, mapView;
 
 let isClick = ref(false)
 let currentZoom = ref(7);
 let loadCount = ref(0);
+
+// 显示控制
+let shtp = ref(1)
 
 onMounted(() => {
   initMap();
@@ -35,9 +46,9 @@ const initMap = () => {
   mapView = new View({
     enableRotation: false,
     projection: "EPSG:4326",
-    center: [117.621597, 32.452257],
-    minZoom: 8,
-    zoom: 9
+    center: [117.021597, 31.552257],
+    minZoom: 6,
+    zoom: 7
   })
   map = new Map({
     target: 'wMap',
@@ -46,8 +57,8 @@ const initMap = () => {
     view: mapView
   })
   map.addControl(new ScaleLine());
-  // 添加滁州图层
-  fetch(chuZhouUrl)
+  // 添加安徽底图
+  fetch(anhuiUrl)
   .then(function (response) {
     return response.text();
   })
@@ -59,7 +70,6 @@ const initMap = () => {
       layer: layerName
     });
     options.tilePixelRatio = 2;
-    console.log(options);
     map.addLayer(
       new TileLayer({
         source: new WMTS(options),
@@ -67,26 +77,6 @@ const initMap = () => {
     );
   });
 
-  // 添加淮南图层
-  fetch(huaiNanUrl)
-  .then(function (response) {
-    return response.text();
-  })
-  .then(function (text) {
-    const result = new WMTSCapabilities().read(text);
-    const layerName = result.ServiceIdentification.Title;
-    let options = optionsFromCapabilities(result, {
-      crossOrigin: "anonymous",
-      layer: layerName
-    });
-    options.tilePixelRatio = 2;
-    console.log(options);
-    map.addLayer(
-      new TileLayer({
-        source: new WMTS(options),
-      })
-    );
-  });
   // 监听鼠标滚轮
   mapView.on("change:resolution", e => {
     currentZoom.value = mapView.getZoom().toFixed(1);
@@ -199,7 +189,7 @@ const initMap = () => {
   })
   map.addLayer(rainLayer);
 
-  // 让点闪烁起来，上一步仅绘制了图层，也就是第一个画面，还并不会闪
+  // 让点闪烁起来，上一步仅绘制了图层，也就是第一个画面(帧)，还并不会闪
   rainLayer.on("postrender", evt => {
     if (r1 >= 5.5) {
       r1 = 4
@@ -342,6 +332,167 @@ const initMap = () => {
     })
   }
 
+
+  // 等值线等值面
+  let dzxLayer, dzmLayer;
+  fetch("./test.xml").then(res => {
+    return res.text();
+  }).then(res => {
+    // 等值线数据以 9999,10  这样的格式为某一段的结束标记
+    // 115.6801,31.20302|115.6648,31.2345|115.6549,31.24864|.....
+    const dzxStr = res.slice(res.indexOf("<dzx>") + 7, res.indexOf("</dzx>") - 1)
+    const dzxArr = dzxStr.split("|")
+    let dataArr = [];
+    let obj = {
+      val: 0,
+      data: []
+    }
+    dzxArr.forEach(item => {
+      const tmpArr = item.split(",");
+      if (Number(tmpArr[0]) !== 9999) {
+        obj.data.push([Number(tmpArr[0]), Number(tmpArr[1])])
+      } else {
+        obj.val = Number(tmpArr[1])
+        dataArr.push(obj)
+        obj = {
+          val: 0,
+          data: []
+        }
+      }
+    })
+    let dzxFeature = [];
+    dataArr.forEach(item => {
+      if (item.data.length) {
+        const startText = new Feature({
+          geometry: new Point([item.data[0][0], item.data[0][1]]),
+          name: "dzxStart"
+        })
+        const endText = new Feature({
+          geometry: new Point([item.data[item.data.length - 1][0], item.data[item.data.length - 1][1]]),
+          name: "dzxEnd"
+        })
+        const lineFet = new Feature({
+          geometry: new LineString(item.data),
+          name: "dzxLine"
+        })
+        let style = new Style({
+          text: new Text({
+            fill: new Fill({
+              color: "#000ff8",
+            }),
+            font: "12px 黑体",
+            text: item.val + ""
+          })
+        })
+        startText.setStyle(style)
+        endText.setStyle(style)
+        style = new Style({
+          stroke: new Stroke({
+            color: '#ff071b',
+            width: 2,
+          })
+        })
+        lineFet.setStyle(style)
+        dzxFeature.push(startText)
+        dzxFeature.push(endText)
+        dzxFeature.push(lineFet)
+      }
+    })
+    const dzxSource = new VectorSource({
+      features: dzxFeature
+    })
+    dzxLayer = new VectorLayer({
+      source: dzxSource,
+      type: "dzx",
+      zIndex: 19
+    })
+    map.addLayer(dzxLayer);
+
+
+    // 等值面数据以 a,10,1|117....  这样的格式为某一个面的结束标记
+    // 117.7487,33.83841:117.7446,33.83484:117.7404,33.83126:117.7362,33.82769:117.7362.....
+    const color = {
+      "-10": "#CCFF66",
+      "10": "#00ffff",
+      "-25": "#00ffff",
+      "25": "#00CCFF",
+      "-50": "#00CCFF",
+      "50": "#0099FF",
+      "-100": "#0099FF",
+      "100": "#0066FF",
+    }
+    const dzmStr = res.slice(res.indexOf("<dzm>") + 7, res.indexOf("</dzm>") - 1)
+    const dzmArr = dzmStr.split(":")
+    let dzmDatas = [];
+    let dzmObj = {
+      val: 0, // 等值面绘制中，未使用到val
+      color: "", // 面的颜色
+      data: []
+    }
+    dzmArr.forEach(item => {
+      const tmpArr = item.split(",");
+      if (tmpArr[0] !== "a") {
+        dzmObj.data.push([Number(tmpArr[0]), Number(tmpArr[1])])
+      } else {
+        dzmObj.val = Number(tmpArr[1])
+        const key = Number(tmpArr[1]) * Number(tmpArr[2].split("|")[0]) + ""
+        dzmObj.color = color[key]
+        dzmDatas.push(dzmObj)
+        dzmObj = {
+          val: 0,
+          color: "",
+          data: []
+        }
+      }
+    })
+    let dzmFeature = [];
+    dzmDatas.forEach(item => {
+      if (item.data.length) {
+        const polyFet = new Feature({
+          geometry: new Polygon([item.data]),
+          name: "dzmPoly"
+        })
+        let style = new Style({
+          fill: new Fill({
+            color: item.color,
+          })
+        })
+        polyFet.setStyle(style)
+        dzmFeature.push(polyFet)
+      }
+    })
+    const dzmSource = new VectorSource({
+      features: dzmFeature
+    })
+    dzmLayer = new VectorLayer({
+      source: dzmSource,
+      type: "dzm",
+      visible: false,
+      zIndex: 19
+    })
+    map.addLayer(dzmLayer);
+
+    watch(() => shtp.value, val => {
+      switch (val) {
+        case 0:
+          dzxLayer.setVisible(false);
+          dzmLayer.setVisible(false);
+          break;
+        case 1:
+          dzxLayer.setVisible(true);
+          dzmLayer.setVisible(false);
+          break;
+        case 2:
+          dzxLayer.setVisible(false);
+          dzmLayer.setVisible(true);
+          break;     
+        default:
+          break;
+      }
+    })
+
+  })
+
 }
 
 
@@ -363,9 +514,20 @@ body {
 }
 #app {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.toggle {
+  height: 35px;
+  line-height: 35px;
+  font-size: 14px;
+  text-align: center;
+}
+.toggle label {
+  margin-right: 15px;
 }
 .map-container {
   width: 100%;
-  height: 100%;
+  flex: 1;
 }
 </style>
