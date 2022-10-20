@@ -1,12 +1,17 @@
 <template>
   <div class="toggle">
-    <span>显示控制: </span>
+    <span style="color: #ff9207;">等值线控制: </span>
     <input type="radio" name="showType" id="none" :value="0" v-model="shtp">
     <label for="none">无</label>
     <input type="radio" name="showType" id="showDzx" :value="1" v-model="shtp">
     <label for="showDzx">等值线</label>
     <input type="radio" name="showType" id="showDzm" :value="2" v-model="shtp">
     <label for="showDzm">等值面</label>
+    <span style="color: #ff9207;">裁剪控制: </span>
+    <input type="radio" name="isClip" id="noClip" :value="0" v-model="isClip">
+    <label for="noClip">不裁剪</label>
+    <input type="radio" name="isClip" id="clip" :value="1" v-model="isClip">
+    <label for="clip">裁剪</label>
   </div>
   <div class="map-container" id="wMap"></div>
   <span class="curZoom" style="position: absolute; bottom: 8px; left: 140px;">地图层级: {{currentZoom}}</span>
@@ -26,6 +31,7 @@ import "ol/ol.css";
 import EsriJSON from 'ol/format/EsriJSON';
 import WMTS, {optionsFromCapabilities} from 'ol/source/WMTS';
 import WMTSCapabilities from 'ol/format/WMTSCapabilities';
+import {parse} from 'ol/xml';
 
 const anhuiUrl = 'http://60.174.203.118:6080/arcgis/rest/services/AnHuiShuiXinXi/AnHuiShuiXinXi_SXDT/MapServer/WMTS/1.0.0/WMTSCapabilities.xml';
 
@@ -34,21 +40,122 @@ let map, mapView;
 let isClick = ref(false)
 let currentZoom = ref(7);
 let loadCount = ref(0);
+let defaultZoom = 7;
+let defaultCenter= [117.021597, 31.552257];
+let minZoom = 6;
 
 // 显示控制
 let shtp = ref(1)
+// 是否裁剪
+let isClip = ref(0)
 
 onMounted(() => {
   initMap();
 })
 
+// 裁剪图层
+let clipLayer;
+// 用于裁剪的feature，多边形
+let clipFeature;
+// 裁剪后中心点
+let clipCenter;
+// 裁剪后层级
+let clipZoom = 7;
+const toggleClip = () => {
+  let layers;
+  let style = new Style({
+    fill: new Fill({
+      color: 'black'
+    })
+  });
+  const clipListen = (e) => {
+    if (isClip.value) {
+      const vectorContext = getVectorContext(e);
+      e.context.globalCompositeOperation = 'destination-in';
+      vectorContext.drawFeature(clipFeature, style);
+    }
+    console.log(1111);
+    e.context.globalCompositeOperation = 'source-over';
+  }
+  if (isClip.value) {
+    layers = map.getLayers();
+    if (!clipLayer) {
+      // 首次裁剪这个区域，需要获取边界数据
+      fetch('./芜湖.xml')
+      .then(function (response) {
+        return response.text();
+      })
+      .then(function (text) {
+        const result = parse(text);
+        const xmlLayer = result.getElementsByTagName('Layer')[0];
+        let coordStr = xmlLayer.getAttribute('Data');
+        let center = xmlLayer.getAttribute('center');
+        let zoom = xmlLayer.getAttribute('zoom');
+        if (center) {
+          clipCenter = center.split(',').map(item => Number(item));
+        }
+        if (zoom) {
+          clipZoom = Number(zoom)
+        }
+        coordStr = coordStr.slice(0, coordStr.lastIndexOf('|'));
+        const coordArr = coordStr.split(':');
+        // 务必检查边界经纬度是否为数字，是否有null, undefined等不合规范的
+        // 否则不生效，且不报错，很难排查
+        let coords = coordArr.map(item => {
+          const arr = item.split(',');
+          return [Number(arr[0]), Number(arr[1])];
+        });
+        // 面的数据格式 [[[11,11],[12,12],[13,13]]]
+        clipFeature = new Feature({
+          geometry: new Polygon([coords]),
+          name: 'clip'
+        });
+        const clipSource = new VectorSource({
+          features: [clipFeature]
+        });
+        clipLayer = new VectorLayer({
+          style: null,
+          type: 'clip',
+          source: clipSource,
+        });
+        // 以下6行和else部分相同，可以优化
+        layers.forEach(layer => {
+          layer.setExtent(clipLayer.getSource().getExtent());
+          layer.on('postrender', clipListen)
+        })
+        map.addLayer(clipLayer);
+        mapView.animate({center: clipCenter, zoom: clipZoom, duration: 500})
+      });
+    } else {
+      layers.forEach(layer => {
+        layer.setExtent(clipLayer.getSource().getExtent());
+        layer.on('postrender', clipListen)
+      })
+      map.addLayer(clipLayer);
+      mapView.animate({center: clipCenter, zoom: clipZoom, duration: 500})
+    }
+  } else {
+    // 不需要裁剪，先将裁剪图层移除
+    map.removeLayer(clipLayer);
+    // 得到原来的图层，移除图层render监听，移除边界控制
+    layers = map.getLayers();
+    layers.forEach(layer => {
+      layer.setExtent(undefined);
+      layer.un('postrender', clipListen)
+    })
+    // 设置为原样
+    map.setLayers(layers);
+    mapView.animate({center: defaultCenter, zoom: defaultZoom, duration: 500})
+  }
+}
+
 const initMap = () => {
   mapView = new View({
     enableRotation: false,
     projection: "EPSG:4326",
-    center: [117.021597, 31.552257],
-    minZoom: 6,
-    zoom: 7
+    center: defaultCenter,
+    minZoom,
+    zoom: defaultZoom
   })
   map = new Map({
     target: 'wMap',
@@ -58,6 +165,7 @@ const initMap = () => {
   })
   map.addControl(new ScaleLine());
   // 添加安徽底图
+  let baseLayer;
   fetch(anhuiUrl)
   .then(function (response) {
     return response.text();
@@ -70,11 +178,10 @@ const initMap = () => {
       layer: layerName
     });
     options.tilePixelRatio = 2;
-    map.addLayer(
-      new TileLayer({
-        source: new WMTS(options),
-      })
-    );
+    baseLayer = new TileLayer({
+      source: new WMTS(options),
+    })
+    map.addLayer(baseLayer);
   });
 
   // 监听鼠标滚轮
@@ -489,6 +596,10 @@ const initMap = () => {
         default:
           break;
       }
+    })
+
+    watch(() => isClip.value, val => {
+      toggleClip();
     })
 
   })
