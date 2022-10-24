@@ -23,6 +23,7 @@ import { Map, View } from "ol";
 import { Tile as TileLayer, Vector as VectorLayer} from "ol/layer";
 import { Vector as VectorSource} from "ol/source";
 import {ScaleLine} from 'ol/control';
+import { unByKey } from 'ol/Observable'
 import Feature from 'ol/Feature';
 import { Point, LineString, Polygon } from 'ol/geom';
 import { getVectorContext } from "ol/render";
@@ -61,21 +62,45 @@ let clipFeature;
 let clipCenter;
 // 裁剪后层级
 let clipZoom = 7;
+// 保存图层的postrender事件
+let renderEventKeys = [];
+// 裁剪样式
+let clipStyle = new Style({
+  fill: new Fill({
+    color: 'black'
+  })
+});
+
+// 图层渲染方法，定义图层每一帧画面应如何渲染
+const clipListen = (e) => {
+  if (isClip.value) {
+    // console.log(1111);
+    const vectorContext = getVectorContext(e);
+    e.context.globalCompositeOperation = 'destination-in';
+    vectorContext.drawFeature(clipFeature, clipStyle);
+  }
+  e.context.globalCompositeOperation = 'source-over';
+}
+
+// 给所有layer添加事件监听，最后添加裁剪图层
+const addClip = (layers) => {
+  layers.forEach(layer => {
+    const key = layer.on('postrender', clipListen)
+    renderEventKeys.push(key)
+  })
+  map.addLayer(clipLayer);
+  mapView.animate({center: clipCenter, zoom: clipZoom, duration: 500})
+}
+
 const toggleClip = () => {
   let layers;
-  let style = new Style({
-    fill: new Fill({
-      color: 'black'
+  // 不管裁剪与否，先将之前监听的postrender事件移除，否则会重复添加造成卡顿
+  // 需使用unByKey移除，使用layer.un('postrender')无法移除监听
+  if (renderEventKeys.length) {
+    renderEventKeys.forEach(key => {
+      unByKey(key)
     })
-  });
-  const clipListen = (e) => {
-    if (isClip.value) {
-      const vectorContext = getVectorContext(e);
-      e.context.globalCompositeOperation = 'destination-in';
-      vectorContext.drawFeature(clipFeature, style);
-    }
-    console.log(1111);
-    e.context.globalCompositeOperation = 'source-over';
+    renderEventKeys = [];
   }
   if (isClip.value) {
     layers = map.getLayers();
@@ -107,6 +132,8 @@ const toggleClip = () => {
         });
         // 面的数据格式 [[[11,11],[12,12],[13,13]]]
         clipFeature = new Feature({
+          // 如果是裁剪多个面，如裁剪多个市区，需要使用 new MultiPolygon，但是feature只能有一个，不能有多个clipFeature
+          // https://openlayers.org/en/latest/apidoc/module-ol_geom_MultiPolygon-MultiPolygon.html
           geometry: new Polygon([coords]),
           name: 'clip'
         });
@@ -118,31 +145,16 @@ const toggleClip = () => {
           type: 'clip',
           source: clipSource,
         });
-        // 以下6行和else部分相同，可以优化
-        layers.forEach(layer => {
-          layer.setExtent(clipLayer.getSource().getExtent());
-          layer.on('postrender', clipListen)
-        })
-        map.addLayer(clipLayer);
-        mapView.animate({center: clipCenter, zoom: clipZoom, duration: 500})
+        addClip(layers)
       });
     } else {
-      layers.forEach(layer => {
-        layer.setExtent(clipLayer.getSource().getExtent());
-        layer.on('postrender', clipListen)
-      })
-      map.addLayer(clipLayer);
-      mapView.animate({center: clipCenter, zoom: clipZoom, duration: 500})
+      addClip(layers)
     }
   } else {
     // 不需要裁剪，先将裁剪图层移除
     map.removeLayer(clipLayer);
-    // 得到原来的图层，移除图层render监听，移除边界控制
+    // 得到原来的图层
     layers = map.getLayers();
-    layers.forEach(layer => {
-      layer.setExtent(undefined);
-      layer.un('postrender', clipListen)
-    })
     // 设置为原样
     map.setLayers(layers);
     mapView.animate({center: defaultCenter, zoom: defaultZoom, duration: 500})
@@ -439,10 +451,9 @@ const initMap = () => {
     })
   }
 
-
   // 等值线等值面
   let dzxLayer, dzmLayer;
-  fetch("./test.xml").then(res => {
+  fetch("./dzx.xml").then(res => {
     return res.text();
   }).then(res => {
     // 等值线数据以 9999,10  这样的格式为某一段的结束标记
