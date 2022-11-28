@@ -236,14 +236,16 @@ const initMap = () => {
       map.getTargetElement().style.cursor = 'pointer'
     }
   })
-  // 绘制闪烁点图层，r1 r2内圈外圈，style对应内圈外圈的样式，
-  // 最中间圆点保持不动，让r1和r2向外扩散
+  // 绘制雨量点图层，让最大点闪烁，假如第一个点是ismax
+  // 最中间圆点保持不动，不断改变半径和透明度，形成扩散渐变
   let rainFeature = [];
-  let rains = [{lgtd: 117.946241, lttd: 32.458797},{lgtd: 118.499925, lttd: 32.395283}]
+  // 实际业务中，雨量点颜色应根据雨量等级配置，以便形成不同的扩散颜色
+  const rainPointColor = "#0000ff";
+  let rains = [{lgtd: 118.946241, lttd: 30.458797, ismax: true},{lgtd: 118.499925, lttd: 30.395283}]
   let rainStyle = new Style({
     image: new Circle({
       fill: new Fill({
-        color: "#0000ff",
+        color: rainPointColor,
       }),
       stroke: new Stroke({
         color: '#fff',
@@ -252,51 +254,37 @@ const initMap = () => {
       radius: 4,
     })
   })
-  let r1 = 4;
-  let r2 = 5;
-  let haloStyle1 = new Style({
-    image: new Circle({
-      fill: new Fill({
-        color: "transparent",
-      }),
-      stroke: new Stroke({
-        color: '#0000ff',
-        width: 0.5,
-      }),
-      radius: r1,
-    })
+  let r = 0;
+  let opa = 1;
+  const rStep = 0.06;
+  const opStep = 0.007;
+  const cir1 = new Circle({
+    fill: new Fill({
+      color: rainPointColor,
+    }),
+    stroke: new Stroke({
+      color: 'transparent',
+      width: 0,
+    }),
+    radius: r,
   })
-  let haloStyle2 = new Style({
-    image: new Circle({
-      fill: new Fill({
-        color: "transparent",
-      }),
-      stroke: new Stroke({
-        color: '#0000ff',
-        width: 0.5,
-      }),
-      radius: r2,
-    })
+  let haloStyle = new Style({
+    image: cir1
   })
   for (let i = 0; i < rains.length; i++) {
     let feature = new Feature({
       geometry: new Point([Number(rains[i].lgtd), Number(rains[i].lttd)]),
       name: 'rainIcon'
     });
-    let haloFeature1 = new Feature({
-      geometry: new Point([Number(rains[i].lgtd), Number(rains[i].lttd)]),
-      name: 'haloFeature1'
-    });
-    let haloFeature2 = new Feature({
-      geometry: new Point([Number(rains[i].lgtd), Number(rains[i].lttd)]),
-      name: 'haloFeature2'
-    });
+    if (rains[i].ismax) {
+      let haloFeature = new Feature({
+        geometry: new Point([Number(rains[i].lgtd), Number(rains[i].lttd)]),
+        name: 'haloFeature'
+      });
+      rainFeature.push(haloFeature)
+    }
     feature.setStyle(rainStyle)
-    haloFeature1.setStyle(haloStyle1)
-    haloFeature2.setStyle(haloStyle2)
     rainFeature.push(feature)
-    rainFeature.push(haloFeature1)
-    rainFeature.push(haloFeature2)
   }
   const rainSource = new VectorSource({
     features: rainFeature
@@ -310,47 +298,21 @@ const initMap = () => {
 
   // 让点闪烁起来，上一步仅绘制了图层，也就是第一个画面(帧)，还并不会闪
   rainLayer.on("postrender", evt => {
-    if (r1 >= 5.5) {
-      r1 = 4
+    if (r >= 8) {
+      r = 0;
+      opa = 1;
     }
-    if (r2 >= 6.5) {
-      r2 = 5
-    }
-    let haloStyle1 = new Style({
-      image: new Circle({
-        fill: new Fill({
-          color: "transparent",
-        }),
-        stroke: new Stroke({
-          color: '#0000ff',
-          width: 0.5,
-        }),
-        radius: r1,
-      })
-    })
-    let haloStyle2 = new Style({
-      image: new Circle({
-        fill: new Fill({
-          color: "transparent",
-        }),
-        stroke: new Stroke({
-          color: '#0000ff',
-          width: 0.5,
-        }),
-        radius: r2,
-      })
-    })
+    r+=rStep;
+    opa-=opStep;
+    cir1.setRadius(r)
+    cir1.setOpacity(opa)
     const fets = rainLayer.getSource().getFeatures();
     const haloFets = fets.filter(item => item.get("name") != "rainIcon");
     haloFets.forEach(feat => {
-      if (feat.get("name") === "haloFeature1") {
-        feat.setStyle(haloStyle1)
-      } else if (feat.get("name") === "haloFeature2") {
-        feat.setStyle(haloStyle2)
+      if (feat.get("name") === "haloFeature") {
+        feat.setStyle(haloStyle)
       }
     })
-    r1+=0.01;
-    r2+=0.01;
     // 调用layer的changed方法，让他不断绘制下一个画面，即形成闪烁
     rainLayer.changed();
   })
